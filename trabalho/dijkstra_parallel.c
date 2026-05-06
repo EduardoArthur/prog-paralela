@@ -2,12 +2,13 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <limits.h>
+#include <omp.h>
 #include <sys/time.h>
 
 static unsigned long int next = 1;
 
 int my_rand(void) {
-return ((next = next * 1103515245 + 12345) % ((unsigned long) RAND_MAX + 1));
+	return ((next = next * 1103515245 + 12345) % ((unsigned long) RAND_MAX + 1));
 }
 
 void my_srand(unsigned int seed) {
@@ -64,25 +65,52 @@ int *dijkstra(struct Graph *graph, int source) {
 	}
 	distances[source] = 0;
 	visited[source] = 1;
-	for (k = 0; k < graph->nEdges[source]; k++)
+	for (k = 0; k < graph->nEdges[source]; k++) {
 		distances[graph->edges[source][k]] = graph->w[source][k];
+	}
 
 	for (v = 1; v < nNodes; v++) {
 		int min = 0;
 		int minValue = INT_MAX;
-		for (k = 0; k < nNodes; k++)
-			if (visited[k] == 0 && distances[k] < minValue) {
-				minValue = distances[k];
-				min = k;
+		
+		#pragma omp parallel 
+        {
+            int local_min = -1;
+            int local_minValue = INT_MAX;
+
+            #pragma omp for nowait
+            for (k = 0; k < nNodes; k++) {
+                if (visited[k] == 0 && distances[k] < local_minValue) {
+                    local_minValue = distances[k];
+                    local_min = k;
+                }
+            }
+
+			if (local_minValue < minValue) {
+            #pragma omp critical 
+				{
+					if (local_minValue < minValue) {
+						minValue = local_minValue;
+						min = local_min;
+					}
+				}
 			}
+        }
 
-		visited[min] = 1;
-
-		for (k = 0; k < graph->nEdges[min]; k++) {
-			int dest = graph->edges[min][k];
-			if (distances[dest] > distances[min] + graph->w[min][k])
-				distances[dest] = distances[min] + graph->w[min][k];
+        if (min == -1) {
+			break;
 		}
+
+        visited[min] = 1;
+
+        #pragma omp parallel for
+        for (k = 0; k < graph->nEdges[min]; k++) {
+            int dest = graph->edges[min][k];
+            
+            if (distances[dest] > distances[min] + graph->w[min][k]) {
+                distances[dest] = distances[min] + graph->w[min][k];
+            }
+        }
 	}
 
 	free(visited);
@@ -117,8 +145,9 @@ int main(int argc, char ** argv) {
 
 	double mean = 0;
 	int v;
-	for (v = 0; v < graph->nNodes; v++)
+	for (v = 0; v < graph->nNodes; v++) {
 		mean += dist[v];
+	}
 
 	fprintf(stdout, "%.2f\n", mean / nNodes);
 
